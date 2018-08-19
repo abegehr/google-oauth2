@@ -1,0 +1,12 @@
+{
+  "name": "google-oath2",
+  "version": "0.0.1",
+  "description": "Testing Google OpenID/OAuth2 with Node.js",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Anton Begehr",
+  "license": "MIT"
+}
