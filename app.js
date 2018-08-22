@@ -7,6 +7,7 @@ var config = require("./config.json");
 //var OAuth = require("oauth");
 //var timestamp = require("unix-timestamp");
 //var oauthSignature = require("oauth-signature");
+var { google } = require("googleapis");
 
 var app = express();
 app.use(cors());
@@ -130,8 +131,147 @@ console.log("Google OAuth2 server listening on port 3000.");
     });
 }*/
 
-function googleAuth(req, res) {
-  Request(
+//googleAuth
+const oauth2Client = new google.auth.OAuth2(
+  config.auth.google.clientId,
+  config.auth.google.clientSecret,
+  config.auth.google.redirectUri
+);
+
+function listMessagesIds(gmail) {
+  const getPageOfMessagesIds = function(request, result) {
+    return request.then(function(resp) {
+      result = result.concat(resp.data.messages);
+      let nextPageToken = resp.data.nextPageToken;
+      if (nextPageToken) {
+        request = gmail.users.messages.list({
+          userId: "me",
+          pageToken: nextPageToken
+        });
+        return getPageOfMessagesIds(request, result);
+      } else {
+        return result;
+      }
+    });
+  };
+  let initialRequest = gmail.users.messages.list({ userId: "me" });
+  return getPageOfMessagesIds(initialRequest, []);
+}
+
+function getMessageMeta(gmail, id) {
+  return gmail.users.messages
+    .get({
+      userId: "me",
+      id: id,
+      format: "metadata",
+      metadataHeaders: ["From", "To", "Cc", "Date", "Subject"]
+    })
+    .catch(err => {
+      console.log("getMessageMeta - error: ", err);
+    });
+}
+
+function formatMessageMeta(headers) {
+  // array to object
+  headers = headers.reduce((obj, item) => {
+    obj[item.name.toLowerCase()] = item.value;
+    return obj;
+  }, {});
+
+  // discard incomplete
+  if (!(headers.from && headers.to && headers.date)) {
+    return null;
+  }
+
+  // date
+  headers.ts = new Date(headers.date).getTime();
+  delete headers.date;
+  // cc
+  if (headers.cc) {
+    headers.ccs = headers.cc.split(", ");
+    delete headers.cc;
+  } else {
+    headers.ccs = [];
+  }
+  console.log("headers: ", headers);
+  // addresses
+  const formatAddress = function(address) {
+    console.log("address: ", address);
+    let name = "";
+    let email = "";
+    if (address.indexOf("<") > 0) {
+      name = /.*(?=<)/.exec(address)[0].slice(0, -1);
+      email = /[^<]*$/.exec(address)[0].slice(0, -1);
+    } else {
+      email = address;
+    }
+    return { name: name, email: email };
+  };
+  headers.ccs.map(formatAddress);
+  headers.from = formatAddress(headers.from);
+  headers.to = formatAddress(headers.to);
+
+  return headers;
+}
+
+function getMessagesMeta(gmail, messages_ids) {
+  if (!messages_ids) return [];
+  const getNextMessageMeta = function(gmail, ids, results) {
+    let message_id = ids.pop();
+    return getMessageMeta(gmail, message_id).then(message => {
+      let headers = formatMessageMeta(message.data.payload.headers);
+      results.push(headers);
+      if (ids.length > 0) {
+        return getNextMessageMeta(gmail, ids, results);
+      } else {
+        return results;
+      }
+    });
+  };
+  return getNextMessageMeta(gmail, messages_ids, []);
+}
+
+async function googleAuth(req, res) {
+  let code = req.body.code;
+  let clientId = req.body.clientId;
+  let redirectUri = req.body.redirectUri;
+  //check if clientId and redirectUri are correct
+  if (clientId !== config.auth.google.clientId) {
+    let error = "googleAuth - error. Wrong clientId: " + clientId;
+    console.log(error);
+    res.status(400).json(error);
+    return;
+  }
+  if (redirectUri !== config.auth.google.redirectUri) {
+    let error = "googleAuth - error. Wrong redirectUri: " + redirectUri;
+    console.log(error);
+    res.status(400).json(error);
+    return;
+  }
+
+  // get tokens
+  let { tokens } = await oauth2Client.getToken(code);
+  oauth2Client.setCredentials(tokens);
+
+  // gmail api
+  let gmail = google.gmail({
+    version: "v1",
+    auth: oauth2Client
+  });
+
+  // get list of emails
+  listMessagesIds(gmail)
+    .then(messages_list => {
+      console.log(`Loading ${messages_list.length} messages.`);
+      let messages_ids = messages_list.map(obj => obj.id);
+      return getMessagesMeta(gmail, messages_ids);
+    })
+    .then(messages => {
+      console.log(`${messages.length} messages loaded!`);
+      res.json({ messages: messages });
+    });
+
+  /*Request(
     {
       method: "post",
       url: "https://accounts.google.com/o/oauth2/token",
@@ -158,7 +298,7 @@ function googleAuth(req, res) {
         res.status(500).json(err || e);
       }
     }
-  );
+  );*/
 }
 
 /*function instagramAuth(req, res) {

@@ -16,7 +16,9 @@ Vue.use(VueAuthenticate, {
         "profile",
         "email",
         "https://www.googleapis.com/auth/gmail.metadata"
-      ]
+      ],
+      requiredUrlParams: ["scope", "access_type"],
+      accessType: "offline"
     }
   }
 });
