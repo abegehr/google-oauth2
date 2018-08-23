@@ -60,5 +60,8 @@ typings/
 # next.js build output
 .next
 
-#config
+# config
 config.json
+
+# client dist
+/client/dist
