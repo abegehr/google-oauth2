@@ -163,15 +163,21 @@ function getMessageMeta(gmail, id) {
     .get({
       userId: "me",
       id: id,
-      format: "metadata",
-      metadataHeaders: ["From", "To", "Cc", "Date", "Subject"]
+      format: "metadata"
+      //metadataHeaders: ["From", "To", "Cc", "Subject"]
     })
     .catch(err => {
       console.log("getMessageMeta - error: ", err);
     });
 }
 
-function formatMessageMeta(headers) {
+function formatMessagesMeta(data) {
+  return data.map(formatMessageMeta).filter(obj => obj !== null);
+}
+function formatMessageMeta(data) {
+  let headers = data.payload.headers;
+  let formated = {};
+
   // array to object
   headers = headers.reduce((obj, item) => {
     obj[item.name.toLowerCase()] = item.value;
@@ -179,24 +185,20 @@ function formatMessageMeta(headers) {
   }, {});
 
   // discard incomplete
-  if (!(headers.from && headers.to && headers.date)) {
+  if (!(headers.from && headers.to)) {
     return null;
   }
 
   // date
-  headers.ts = new Date(headers.date).getTime();
-  delete headers.date;
+  formated.ts = data.internalDate;
   // cc
   if (headers.cc) {
-    headers.ccs = headers.cc.split(", ");
-    delete headers.cc;
+    formated.ccs = headers.cc.split(", ");
   } else {
-    headers.ccs = [];
+    formated.ccs = [];
   }
-  console.log("headers: ", headers);
   // addresses
   const formatAddress = function(address) {
-    console.log("address: ", address);
     let name = "";
     let email = "";
     if (address.indexOf("<") > 0) {
@@ -207,11 +209,11 @@ function formatMessageMeta(headers) {
     }
     return { name: name, email: email };
   };
-  headers.ccs.map(formatAddress);
-  headers.from = formatAddress(headers.from);
-  headers.to = formatAddress(headers.to);
+  formated.ccs = formated.ccs.map(formatAddress);
+  formated.from = formatAddress(headers.from);
+  formated.to = formatAddress(headers.to);
 
-  return headers;
+  return formated;
 }
 
 function getMessagesMeta(gmail, messages_ids) {
@@ -219,8 +221,7 @@ function getMessagesMeta(gmail, messages_ids) {
   const getNextMessageMeta = function(gmail, ids, results) {
     let message_id = ids.pop();
     return getMessageMeta(gmail, message_id).then(message => {
-      let headers = formatMessageMeta(message.data.payload.headers);
-      results.push(headers);
+      results.push(message.data);
       if (ids.length > 0) {
         return getNextMessageMeta(gmail, ids, results);
       } else {
@@ -229,6 +230,37 @@ function getMessagesMeta(gmail, messages_ids) {
     });
   };
   return getNextMessageMeta(gmail, messages_ids, []);
+}
+
+function toRelationships(messages) {
+  let relationships = messages.reduce((result, item, index) => {
+    let from_email = item.from.email;
+    let to_email = item.to.email;
+    let cc_emails = item.ccs.map(cc => cc.email);
+    let receiver_emails = cc_emails.concat([to_email]);
+
+    if (result[from_email]) {
+      result[from_email] = result[from_email].concat(receiver_emails);
+    } else {
+      result[from_email] = receiver_emails;
+    }
+
+    return result;
+  }, {});
+
+  Object.keys(relationships).forEach(key => {
+    relationships[key] = relationships[key].reduce((result, item, index) => {
+      if (result[item]) {
+        result[item] += 1;
+      } else {
+        result[item] = 1;
+      }
+
+      return result;
+    }, {});
+  }, {});
+
+  return relationships;
 }
 
 async function googleAuth(req, res) {
@@ -262,13 +294,24 @@ async function googleAuth(req, res) {
   // get list of emails
   listMessagesIds(gmail)
     .then(messages_list => {
+      // get emails metadata
       console.log(`Loading ${messages_list.length} messages.`);
-      let messages_ids = messages_list.map(obj => obj.id);
+      let messages_ids = messages_list.map(obj => obj.id).slice(0, 10);
       return getMessagesMeta(gmail, messages_ids);
     })
-    .then(messages => {
-      console.log(`${messages.length} messages loaded!`);
-      res.json({ messages: messages });
+    .then(messages_data => {
+      console.log(`${messages_data.length} messages loaded!`);
+      // format messages data
+      let messages = formatMessagesMeta(messages_data);
+      // calculate relationships from messages
+      let relationships = toRelationships(messages);
+      // response
+      res.json({
+        access_token: tokens.access_token,
+        messages_data: messages_data,
+        messages: messages,
+        relationships: relationships
+      });
     });
 
   /*Request(
