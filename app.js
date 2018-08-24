@@ -163,8 +163,8 @@ function getMessageMeta(gmail, id) {
     .get({
       userId: "me",
       id: id,
-      format: "metadata"
-      //metadataHeaders: ["From", "To", "Cc", "Subject"]
+      format: "metadata",
+      metadataHeaders: ["From", "To", "Delivered-To", "Cc", "Subject"]
     })
     .catch(err => {
       console.log("getMessageMeta - error: ", err);
@@ -212,6 +212,7 @@ function formatMessageMeta(data) {
   formated.ccs = formated.ccs.map(formatAddress);
   formated.from = formatAddress(headers.from);
   formated.to = formatAddress(headers.to);
+  formated.delivered_to = formatAddress(headers.to);
 
   return formated;
 }
@@ -283,16 +284,47 @@ async function googleAuth(req, res) {
 
   // get tokens
   let { tokens } = await oauth2Client.getToken(code);
+  console.log("Authenticated with: ", tokens);
   oauth2Client.setCredentials(tokens);
 
-  // gmail api
+  // open APIs
+  let plus = google.plus({
+    version: "v1",
+    auth: oauth2Client
+  });
   let gmail = google.gmail({
     version: "v1",
     auth: oauth2Client
   });
+  // get and return profile
+  Promise.all([
+    plus.people.get({ userId: "me" }),
+    gmail.users.getProfile({ userId: "me" })
+  ])
+    .then(responses => {
+      let plus_data = responses[0].data;
+      let gmail_data = responses[1].data;
+      console.log("plus_data: ", plus_data);
+      console.log("gmail_data: ", gmail_data);
+
+      let profile = {
+        name: plus_data.displayName,
+        email: gmail_data.emailAddress,
+        domain: plus_data.domain,
+        logo_url: plus_data.image.url,
+        first_name: plus_data.name.givenName,
+        last_name: plus_data.name.familyName
+      };
+      res.json({ profile: profile });
+    })
+    .catch(err => {
+      let error =
+        "googleAuth – Error getting user profile from Google+ API: " + err;
+      console.log(error);
+    });
 
   // get list of emails
-  listMessagesIds(gmail)
+  /*listMessagesIds(gmail)
     .then(messages_list => {
       // get emails metadata
       console.log(`Loading ${messages_list.length} messages.`);
@@ -312,7 +344,7 @@ async function googleAuth(req, res) {
         messages: messages,
         relationships: relationships
       });
-    });
+    });*/
 
   /*Request(
     {
