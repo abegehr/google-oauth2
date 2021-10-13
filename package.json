@@ -11,7 +11,7 @@
   "author": "Anton Begehr",
   "license": "MIT",
   "dependencies": {
-    "axios": "^0.18.0",
+    "axios": "^0.21.2",
     "cors": "^2.8.4",
     "express": "^4.16.3",
     "googleapis": "^33.0.0",
